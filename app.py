@@ -7,6 +7,9 @@ from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 from collections import Counter
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
 
 
 def coletar_resultados(driver):
@@ -30,12 +33,22 @@ def coletar_resultados(driver):
                 descricao = produto.find_element(By.CSS_SELECTOR, 'h2[data-testid="product-card::name"]').text
             except:
                 descricao = "Descrição não encontrada"
+
             try:
                 valor = produto.find_element(By.CSS_SELECTOR, 'p[data-testid="product-card::price"]').text
             except:
                 valor = "Valor não encontrado"
 
-            resultados_coleta.append({"descricao": descricao, "valor": valor})
+            try:
+                link = produto.find_element(By.CSS_SELECTOR, 'a[data-testid="product-card::card"]').get_attribute("href")
+            except:
+                link = "Link não encontrado"
+
+            resultados_coleta.append({
+                "descricao": descricao,
+                "valor": valor,
+                "link": link
+            })
 
         # Só tenta ir para a próxima se ainda não tiver coletado 3 páginas
         if pagina < 2:
@@ -91,6 +104,37 @@ def coletar_com_filtro(driver, valor_filtro, nome_filtro="Filtro"):
         print(f"Não foi possível aplicar o filtro '{nome_filtro}'.")
 
     return resultados
+
+
+def coletar_detalhes(link):
+    """
+    Coleta as especificações de um produto a partir do link da página.
+    """
+    detalhes = {}
+    try:
+        resp = requests.get(link, timeout=10)
+        sp = BeautifulSoup(resp.content, "html.parser")
+        bloco = sp.find("div", class_="DetailsSection_ContentWrapper__LBFf5")
+
+        if bloco:
+            atributos = bloco.find_all("div", class_="DetailsContent_AttributeBlock__lGim_")
+            for attr in atributos:
+                titulo = attr.find("h3")
+                if titulo:
+                    titulo = titulo.get_text(strip=True)
+                else:
+                    continue
+
+                tabela = attr.find_all("tr")
+                for linha in tabela:
+                    chave = linha.find("th").get_text(strip=True)
+                    valor = linha.find("td").get_text(" ", strip=True)
+                    detalhes[f"{titulo} - {chave}"] = valor
+        else:
+            detalhes["Erro"] = "Bloco de especificações não encontrado"
+    except Exception as e:
+        detalhes["Erro"] = str(e)
+    return detalhes
 
 
 # --- Início do Script Principal ---
@@ -169,18 +213,113 @@ else:
 
 # --- 5. ANÁLISE DE FREQUÊNCIA E RANKING ---
 
-# Junta todos os produtos (apenas descrições)
+# Junta todos os produtos (descrições, valores e links)
 todos_produtos = []
 for resultado in [resultados_padrao, resultados_avaliados, resultados_menor_preco]:
-    todos_produtos.extend([item["descricao"] for item in resultado])
+    todos_produtos.extend(resultado)
 
-# Conta a frequência de cada produto
-contador = Counter(todos_produtos)
+# Conta a frequência de cada produto (pela descrição)
+contador = Counter([item["descricao"] for item in todos_produtos])
 ranking_produtos = contador.most_common()
 
-# Exibe ranking
+# Cria um dicionário {descricao: link} pegando o primeiro link encontrado
+mapa_links = {}
+for item in todos_produtos:
+    if item["descricao"] not in mapa_links:
+        mapa_links[item["descricao"]] = item["link"]
+
+# --- Print 1: Ranking completo ---
 print("\n\n" + "="*50)
-print("--- RANKING DE PRODUTOS MAIS FREQUENTES ---")
+print("--- RANKING DE TODOS OS PRODUTOS MAIS FREQUENTES ---")
 print("="*50)
 for i, (produto, freq) in enumerate(ranking_produtos, start=1):
     print(f"{i}. {produto} - Aparece {freq} vezes")
+
+# --- Print 2: Apenas os 5 primeiros com links ---
+print("\n\n" + "="*50)
+print("--- TOP 5 PRODUTOS MAIS FREQUENTES (COM LINKS) ---")
+print("="*50)
+top5 = ranking_produtos[:5]
+for i, (produto, freq) in enumerate(top5, start=1):
+    link = mapa_links.get(produto, "Link não encontrado")
+    print(f"{i}. {produto} - Aparece {freq} vezes")
+    print(f"   Link: {link}")
+
+# --- Print 3: Detalhes dos 5 primeiros ---
+print("\n\n" + "="*50)
+print("--- DETALHES DOS 5 PRIMEIROS PRODUTOS ---")
+print("="*50)
+for produto, _ in top5:
+    link = mapa_links.get(produto, None)
+    if not link or link == "Link não encontrado":
+        print(f"\n--- {produto} ---")
+        print("Link não disponível para coletar detalhes.")
+        continue
+
+    detalhes = coletar_detalhes(link)
+    print(f"\n--- {produto} ---")
+    for k, v in detalhes.items():
+        print(f"{k}: {v}")
+
+# --- Criação do Excel com várias abas ---
+with pd.ExcelWriter("resultados_pesquisa.xlsx", engine="openpyxl") as writer:
+
+    # 1. Resultados padrão
+    df_padrao = pd.DataFrame(resultados_padrao)
+    df_padrao.to_excel(writer, sheet_name="Padrao", index=False)
+
+    # 2. Melhor avaliado
+    df_avaliados = pd.DataFrame(resultados_avaliados)
+    df_avaliados.to_excel(writer, sheet_name="Melhor Avaliado", index=False)
+
+    # 3. Menor preço
+    df_preco = pd.DataFrame(resultados_menor_preco)
+    df_preco.to_excel(writer, sheet_name="Menor Preco", index=False)
+
+    # 4. Ranking completo
+    df_ranking = pd.DataFrame(ranking_produtos, columns=["Produto", "Frequência"])
+    df_ranking.to_excel(writer, sheet_name="Ranking", index=False)
+
+    # 5. Top 5 com links
+    top5_data = []
+    for i, (produto, freq) in enumerate(top5, start=1):
+        link = mapa_links.get(produto, "Link não encontrado")
+        top5_data.append({"Posição": i, "Produto": produto, "Frequência": freq, "Link": link})
+    df_top5 = pd.DataFrame(top5_data)
+    df_top5.to_excel(writer, sheet_name="Top 5", index=False)
+
+    # 6. Detalhes dos 5 primeiros (Formato Dinâmico com todas as informações)
+    detalhes_dinamico_data = []
+    for produto, _ in top5:
+        link = mapa_links.get(produto, None)
+        
+        # Dicionário base para a linha do produto
+        linha_produto = {"Produto": produto}
+
+        if not link or link == "Link não encontrado":
+            linha_produto["Status"] = "Link não disponível para coletar detalhes"
+        else:
+            detalhes = coletar_detalhes(link)
+            if "Erro" in detalhes:
+                linha_produto["Status"] = f"Erro ao coletar detalhes: {detalhes['Erro']}"
+            else:
+                # Adiciona todos os detalhes coletados ao dicionário da linha
+                # As chaves do dicionário 'detalhes' se tornarão nomes de colunas
+                linha_produto.update(detalhes)
+        
+        detalhes_dinamico_data.append(linha_produto)
+
+    # Cria o DataFrame. O pandas criará colunas para todas as chaves encontradas.
+    df_detalhes_dinamico = pd.DataFrame(detalhes_dinamico_data)
+    
+    # Garante que a coluna 'Produto' seja a primeira para melhor visualização
+    if 'Produto' in df_detalhes_dinamico.columns:
+        cols = df_detalhes_dinamico.columns.tolist()
+        cols.insert(0, cols.pop(cols.index('Produto')))
+        df_detalhes_dinamico = df_detalhes_dinamico.reindex(columns=cols)
+
+    df_detalhes_dinamico.to_excel(writer, sheet_name="Detalhes Top 5", index=False)
+
+
+print("Arquivo 'resultados_pesquisa.xlsx' salvo com sucesso!")
+
