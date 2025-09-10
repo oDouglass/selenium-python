@@ -13,13 +13,9 @@ import pandas as pd
 
 
 def coletar_resultados(driver):
-    """
-    Função para coletar dados de exatamente 3 páginas de resultados.
-    (página atual + 2 próximas)
-    """
     resultados_coleta = []
 
-    for pagina in range(3):  # Página 1 + 2 próximas
+    for pagina in range(3): 
         print(f"Coletando dados da página {pagina + 1}...")
         sleep(3)
 
@@ -50,7 +46,6 @@ def coletar_resultados(driver):
                 "link": link
             })
 
-        # Só tenta ir para a próxima se ainda não tiver coletado 3 páginas
         if pagina < 2:
             try:
                 botao_proximo = WebDriverWait(driver, 10).until(
@@ -94,7 +89,7 @@ def coletar_com_filtro(driver, valor_filtro, nome_filtro="Filtro"):
             print("Retornou para a página 1 do filtro.")
             sleep(3)
         except NoSuchElementException:
-            pass  # Se já estiver na página 1, ignora
+            pass  
 
         # Coleta os resultados das 3 primeiras páginas
         print(f"\n--- Iniciando coleta com o filtro '{nome_filtro}' ---")
@@ -107,9 +102,6 @@ def coletar_com_filtro(driver, valor_filtro, nome_filtro="Filtro"):
 
 
 def coletar_detalhes(link):
-    """
-    Coleta as especificações de um produto a partir do link da página.
-    """
     detalhes = {}
     try:
         resp = requests.get(link, timeout=10)
@@ -135,9 +127,6 @@ def coletar_detalhes(link):
     except Exception as e:
         detalhes["Erro"] = str(e)
     return detalhes
-
-
-# --- Início do Script Principal ---
 
 print("Selecione uma opção de pesquisa:")
 print("1. Notebook")
@@ -167,22 +156,16 @@ driver.find_element(By.ID, "searchInput").send_keys(termo_pesquisa)
 driver.find_element(By.ID, "searchInput").send_keys(Keys.ENTER)
 sleep(5)
 
-# --- 1. PRIMEIRA COLETA (ORDEM PADRÃO) ---
 print("\n--- Iniciando coleta com a ordenação PADRÃO ('Mais relevantes') ---")
 resultados_padrao = coletar_resultados(driver)
 
-# --- 2. FILTRO MELHOR AVALIADO ---
 print("\n--- Alterando o filtro para 'MELHOR AVALIADO' ---")
 resultados_avaliados = coletar_com_filtro(driver, "rating_desc", "Melhor avaliado")
 
-# --- 3. FILTRO MENOR PREÇO ---
 print("\n--- Alterando o filtro para 'MENOR PREÇO' ---")
 resultados_menor_preco = coletar_com_filtro(driver, "price_asc", "Menor preço")
 
-# --- 4. FINALIZAÇÃO ---
 driver.quit()
-
-# --- Exibição de resultados individuais ---
 
 print("\n\n" + "=" * 50)
 print("--- RESULTADOS COM ORDENAÇÃO PADRÃO ('Mais relevantes') ---")
@@ -211,31 +194,24 @@ if resultados_menor_preco:
 else:
     print("Nenhum resultado encontrado.")
 
-# --- 5. ANÁLISE DE FREQUÊNCIA E RANKING ---
-
-# Junta todos os produtos (descrições, valores e links)
 todos_produtos = []
 for resultado in [resultados_padrao, resultados_avaliados, resultados_menor_preco]:
     todos_produtos.extend(resultado)
 
-# Conta a frequência de cada produto (pela descrição)
 contador = Counter([item["descricao"] for item in todos_produtos])
 ranking_produtos = contador.most_common()
 
-# Cria um dicionário {descricao: link} pegando o primeiro link encontrado
 mapa_links = {}
 for item in todos_produtos:
     if item["descricao"] not in mapa_links:
         mapa_links[item["descricao"]] = item["link"]
 
-# --- Print 1: Ranking completo ---
 print("\n\n" + "="*50)
 print("--- RANKING DE TODOS OS PRODUTOS MAIS FREQUENTES ---")
 print("="*50)
 for i, (produto, freq) in enumerate(ranking_produtos, start=1):
     print(f"{i}. {produto} - Aparece {freq} vezes")
 
-# --- Print 2: Apenas os 5 primeiros com links ---
 print("\n\n" + "="*50)
 print("--- TOP 5 PRODUTOS MAIS FREQUENTES (COM LINKS) ---")
 print("="*50)
@@ -245,7 +221,6 @@ for i, (produto, freq) in enumerate(top5, start=1):
     print(f"{i}. {produto} - Aparece {freq} vezes")
     print(f"   Link: {link}")
 
-# --- Print 3: Detalhes dos 5 primeiros ---
 print("\n\n" + "="*50)
 print("--- DETALHES DOS 5 PRIMEIROS PRODUTOS ---")
 print("="*50)
@@ -261,7 +236,6 @@ for produto, _ in top5:
     for k, v in detalhes.items():
         print(f"{k}: {v}")
 
-# --- Criação do Excel com várias abas ---
 with pd.ExcelWriter("resultados_pesquisa.xlsx", engine="openpyxl") as writer:
 
     # 1. Resultados padrão
@@ -303,16 +277,12 @@ with pd.ExcelWriter("resultados_pesquisa.xlsx", engine="openpyxl") as writer:
             if "Erro" in detalhes:
                 linha_produto["Status"] = f"Erro ao coletar detalhes: {detalhes['Erro']}"
             else:
-                # Adiciona todos os detalhes coletados ao dicionário da linha
-                # As chaves do dicionário 'detalhes' se tornarão nomes de colunas
                 linha_produto.update(detalhes)
         
         detalhes_dinamico_data.append(linha_produto)
 
-    # Cria o DataFrame. O pandas criará colunas para todas as chaves encontradas.
     df_detalhes_dinamico = pd.DataFrame(detalhes_dinamico_data)
     
-    # Garante que a coluna 'Produto' seja a primeira para melhor visualização
     if 'Produto' in df_detalhes_dinamico.columns:
         cols = df_detalhes_dinamico.columns.tolist()
         cols.insert(0, cols.pop(cols.index('Produto')))
